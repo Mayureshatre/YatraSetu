@@ -1,12 +1,12 @@
-import { z } from 'zod';
+import { z } from "zod";
 
-export const vehicleTypeEnum = z.enum(['car', 'bike', 'suv', 'bus']);
+export const vehicleTypeEnum = z.enum(["car", "bike", "suv", "bus"]);
 
 export const tripSetupSchema = z.object({
   origin_lat: z.number().min(-90).max(90).optional(),
   origin_lng: z.number().min(-180).max(180).optional(),
   origin_label: z.string().min(1).max(200),
-  vehicle_type: vehicleTypeEnum.default('car'),
+  vehicle_type: vehicleTypeEnum.default("car"),
   duration_days: z.number().int().positive().max(30).default(1),
 });
 
@@ -14,7 +14,7 @@ export const recommendationRequestSchema = z.object({
   origin_lat: z.number().min(-90).max(90).optional(),
   origin_lng: z.number().min(-180).max(180).optional(),
   origin_label: z.string().min(1).max(200),
-  vehicle_type: vehicleTypeEnum.default('car'),
+  vehicle_type: vehicleTypeEnum.default("car"),
   duration_days: z.number().int().positive().max(30).default(1),
   interests: z.array(z.string()).optional(),
 });
@@ -52,7 +52,7 @@ export const postCreateSchema = z.object({
   destination_id: z.string(),
   title: z.string().min(3).max(200),
   body: z.string().min(10).max(5000),
-  category: z.string().optional().default('General Discussion'),
+  category: z.string().optional().default("General Discussion"),
 });
 
 export const commentCreateSchema = z.object({
@@ -71,15 +71,18 @@ export const reportCreateSchema = z.object({
 });
 
 export const imageUploadMetaSchema = z.object({
-  mime_type: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+  mime_type: z.enum(["image/jpeg", "image/png", "image/webp"]),
   size_bytes: z.number().int().positive().max(5242880), // 5 MB max
 });
 
 export const busBookingQuerySchema = z.object({
   origin_city: z.string().min(1).max(100),
   destination_city: z.string().min(1).max(100),
-  travel_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  provider: z.enum(['redbus', 'abhibus', 'state_transport']).default('redbus'),
+  travel_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  provider: z.enum(["redbus", "abhibus", "state_transport"]).default("redbus"),
 });
 
 // AI Output Validation Schemas
@@ -110,7 +113,7 @@ export const aiItineraryOutputSchema = z.object({
 
 export const aiServiceReadinessOutputSchema = z.object({
   safety_score: z.number().min(0).max(100),
-  readiness_level: z.enum(['High', 'Moderate', 'Low']),
+  readiness_level: z.enum(["High", "Moderate", "Low"]),
   headline: z.string().min(5),
   summary: z.string().min(10),
   coverage_analysis: z.object({
@@ -120,3 +123,19 @@ export const aiServiceReadinessOutputSchema = z.object({
   }),
   actionable_tips: z.array(z.string()),
 });
+
+export const aiVehicleCompatibilityOutputSchema = z.object({
+  score: z.number().min(0).max(100),
+  verdict: z.enum([
+    "Highly Recommended",
+    "Proceed with Caution",
+    "Not Recommended",
+  ]),
+  summary: z.string(),
+  reasons: z.array(z.string()),
+  warnings: z.array(z.string()),
+});
+
+export type AiVehicleCompatibilityOutput = z.infer<
+  typeof aiVehicleCompatibilityOutputSchema
+>;

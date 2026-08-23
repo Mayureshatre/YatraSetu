@@ -2,7 +2,8 @@ import {
   aiRecommendationsOutputSchema,
   aiItineraryOutputSchema,
   aiServiceReadinessOutputSchema,
-} from '@/lib/validation/schemas';
+  aiVehicleCompatibilityOutputSchema,
+} from "@/lib/validation/schemas";
 
 import {
   DestinationWeatherData,
@@ -11,7 +12,7 @@ import {
   RouteServiceItem,
   ItineraryItem,
   VehicleType,
-} from '@/types';
+} from "@/types";
 
 export interface AiPromptCandidate {
   id: string;
@@ -52,6 +53,36 @@ export interface AiServicesProcessingInput {
   hospitals: RouteServiceItem[];
 }
 
+export interface AiVehicleProfile {
+  name: string;
+  category: string;
+  groundClearanceMm: number;
+  drivetrain: string;
+  engineCapacityCc: number;
+}
+
+export interface AiDestinationTerrain {
+  name: string;
+  state?: string;
+  highAltitude?: boolean;
+  unpavedRoadsPercent?: number;
+  waterCrossings?: boolean;
+  terrainSummary?: string;
+}
+
+export interface AiVehicleCompatibilityInput {
+  vehicle: AiVehicleProfile;
+  destination: AiDestinationTerrain;
+}
+
+export interface AiVehicleCompatibilityResult {
+  score: number;
+  verdict: "Highly Recommended" | "Proceed with Caution" | "Not Recommended";
+  summary: string;
+  reasons: string[];
+  warnings: string[];
+}
+
 export interface AiAdapter {
   rankDestinations(input: AiRankingInput): Promise<{
     ranked: Array<{
@@ -61,18 +92,23 @@ export interface AiAdapter {
       is_extended_radius?: boolean;
       extension_justification?: string;
     }>;
-    source: 'ai' | 'fallback_engine';
+    source: "ai" | "fallback_engine";
   }>;
 
   generateItinerary(input: AiItineraryInput): Promise<{
     summary: string;
     items: ItineraryItem[];
-    source: 'ai' | 'fallback_engine';
+    source: "ai" | "fallback_engine";
   }>;
 
   processRouteServices(input: AiServicesProcessingInput): Promise<{
     briefing: AiServiceReadinessBriefing;
-    source: 'ai' | 'fallback_engine';
+    source: "ai" | "fallback_engine";
+  }>;
+
+  evaluateVehicleCompatibility(input: AiVehicleCompatibilityInput): Promise<{
+    report: AiVehicleCompatibilityResult;
+    source: "ai" | "fallback_engine";
   }>;
 }
 
@@ -80,45 +116,35 @@ export class HybridAiAdapter implements AiAdapter {
   private apiKey: string | undefined;
 
   constructor(apiKey?: string) {
-    this.apiKey = apiKey || process.env.AI_PROVIDER_API_KEY;
+    this.apiKey =
+      apiKey || process.env.GEMINI_API_KEY || process.env.AI_PROVIDER_API_KEY;
   }
 
   async rankDestinations(input: AiRankingInput) {
-    // 1. If API Key is present, attempt live LLM call
     if (this.apiKey) {
       try {
         const liveResult = await this.callLiveAiForRanking(input);
-
         if (liveResult) {
-          return {
-            ranked: liveResult,
-            source: 'ai' as const,
-          };
+          return { ranked: liveResult, source: "ai" as const };
         }
       } catch (err) {
-        // Fallback gracefully on AI error/timeout
+        // Fallback gracefully
       }
     }
 
-    // 2. Deterministic Structured Heuristic Fallback Engine
     const fallbackRanked = this.generateDeterministicRanking(input);
-
-    return {
-      ranked: fallbackRanked,
-      source: 'fallback_engine' as const,
-    };
+    return { ranked: fallbackRanked, source: "fallback_engine" as const };
   }
 
   async generateItinerary(input: AiItineraryInput) {
     if (this.apiKey) {
       try {
         const liveItin = await this.callLiveAiForItinerary(input);
-
         if (liveItin) {
           return {
             summary: liveItin.summary,
             items: liveItin.items,
-            source: 'ai' as const,
+            source: "ai" as const,
           };
         }
       } catch (err) {
@@ -127,11 +153,10 @@ export class HybridAiAdapter implements AiAdapter {
     }
 
     const fallbackItin = this.generateDeterministicItinerary(input);
-
     return {
       summary: fallbackItin.summary,
       items: fallbackItin.items,
-      source: 'fallback_engine' as const,
+      source: "fallback_engine" as const,
     };
   }
 
@@ -139,24 +164,175 @@ export class HybridAiAdapter implements AiAdapter {
     if (this.apiKey) {
       try {
         const liveBriefing = await this.callLiveAiForServices(input);
-
         if (liveBriefing) {
-          return {
-            briefing: liveBriefing,
-            source: 'ai' as const,
-          };
+          return { briefing: liveBriefing, source: "ai" as const };
         }
       } catch (err) {
-        // Fallback gracefully to structured deterministic briefing
+        // Fallback gracefully
       }
     }
 
-    const fallbackBriefing =
-      this.generateDeterministicServiceBriefing(input);
-
+    const fallbackBriefing = this.generateDeterministicServiceBriefing(input);
     return {
       briefing: fallbackBriefing,
-      source: 'fallback_engine' as const,
+      source: "fallback_engine" as const,
+    };
+  }
+
+  async evaluateVehicleCompatibility(input: AiVehicleCompatibilityInput) {
+    if (this.apiKey) {
+      try {
+        const liveReport = await this.callLiveAiForVehicleCompatibility(input);
+        if (liveReport) {
+          return { report: liveReport, source: "ai" as const };
+        }
+      } catch (err) {
+        // Fallback gracefully
+      }
+    }
+
+    const fallbackReport =
+      this.generateDeterministicVehicleCompatibility(input);
+    return {
+      report: fallbackReport,
+      source: "fallback_engine" as const,
+    };
+  }
+
+  private async callLiveAiForVehicleCompatibility(
+    input: AiVehicleCompatibilityInput,
+  ): Promise<AiVehicleCompatibilityResult | null> {
+    const prompt = `You are YatraSetu's expert vehicle terrain and expedition safety analyst.
+Evaluate how suitable this vehicle is for the destination's terrain:
+
+Vehicle Profile:
+- Model: ${input.vehicle.name} (${input.vehicle.category})
+- Ground Clearance: ${input.vehicle.groundClearanceMm} mm
+- Drivetrain: ${input.vehicle.drivetrain}
+- Engine Capacity: ${input.vehicle.engineCapacityCc} cc
+
+Destination Terrain:
+- Name: ${input.destination.name} (${input.destination.state || "India"})
+- High Altitude / Steep Hairpin Pass: ${input.destination.highAltitude ? "Yes" : "No"}
+- Unpaved / Gravel / Trail Roads: ${input.destination.unpavedRoadsPercent ?? 20}%
+- Water Crossings / Mud: ${input.destination.waterCrossings ? "Present" : "None"}
+- Summary: ${input.destination.terrainSummary || "Mixed asphalt highways and regional mountain/rural roads"}
+
+Provide:
+1. score: Integer 0-100 indicating mechanical and drivability suitability.
+2. verdict: Exactly one of ["Highly Recommended", "Proceed with Caution", "Not Recommended"].
+3. summary: Crisp 1-sentence assessment for this vehicle on this route.
+4. reasons: Array of 1-3 advantages / suited capabilities.
+5. warnings: Array of 1-3 mechanical precautions or safety hazards.
+
+Output strictly valid JSON matching this schema:
+{
+  "score": 85,
+  "verdict": "Highly Recommended",
+  "summary": "...",
+  "reasons": ["..."],
+  "warnings": ["..."]
+}`;
+
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.2,
+          },
+        }),
+        signal: AbortSignal.timeout(6000),
+      },
+    );
+
+    if (res.ok) {
+      const data = await res.json();
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (rawText) {
+        const parsed = JSON.parse(rawText);
+        const validated = aiVehicleCompatibilityOutputSchema.safeParse(parsed);
+        if (validated.success) {
+          return validated.data;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private generateDeterministicVehicleCompatibility(
+    input: AiVehicleCompatibilityInput,
+  ): AiVehicleCompatibilityResult {
+    let score = 80;
+    const reasons: string[] = [];
+    const warnings: string[] = [];
+    const { vehicle, destination } = input;
+
+    if (vehicle.groundClearanceMm >= 190) {
+      score += 10;
+      reasons.push(
+        `${vehicle.groundClearanceMm}mm ground clearance easily tackles undulations and gravel.`,
+      );
+    } else if (vehicle.groundClearanceMm < 170) {
+      score -= 18;
+      warnings.push(
+        `Low ride height (${vehicle.groundClearanceMm}mm) risks underbody contact on broken surfaces.`,
+      );
+    }
+
+    if (
+      destination.unpavedRoadsPercent &&
+      destination.unpavedRoadsPercent > 30
+    ) {
+      if (vehicle.drivetrain === "4WD" || vehicle.drivetrain === "AWD") {
+        score += 10;
+        reasons.push(
+          `${vehicle.drivetrain} drivetrain provides reliable traction over rough trails.`,
+        );
+      } else {
+        score -= 12;
+        warnings.push(
+          `${vehicle.drivetrain} layout may experience wheel slip on steep loose gradients.`,
+        );
+      }
+    }
+
+    if (
+      destination.highAltitude &&
+      vehicle.engineCapacityCc < 1200 &&
+      vehicle.category !== "Motorcycle"
+    ) {
+      score -= 10;
+      warnings.push(
+        "Engine performance may taper at higher elevations on sustained climbs.",
+      );
+    } else {
+      reasons.push(
+        "Engine performance and gearing are suitable for typical highway speeds.",
+      );
+    }
+
+    const finalScore = Math.max(25, Math.min(98, score));
+    const verdict =
+      finalScore >= 80
+        ? "Highly Recommended"
+        : finalScore >= 60
+          ? "Proceed with Caution"
+          : "Not Recommended";
+
+    const summary = `${vehicle.name} is ${verdict.toLowerCase()} for traveling to ${destination.name} based on road conditions and vehicle specifications.`;
+
+    return {
+      score: finalScore,
+      verdict,
+      summary,
+      reasons: reasons.slice(0, 3),
+      warnings: warnings.slice(0, 3),
     };
   }
 
@@ -172,7 +348,7 @@ User Trip Context:
 - Starting Origin: ${input.origin_label}
 - Selected Vehicle: ${input.vehicle_type}
 - Trip Duration: ${input.duration_days} day(s)
-${input.interests && input.interests.length > 0 ? `- Traveler Interests: ${input.interests.join(', ')}` : ''}
+${input.interests && input.interests.length > 0 ? `- Traveler Interests: ${input.interests.join(", ")}` : ""}
 
 Verified Candidate Destinations (with verified road distance & travel time):
 ${JSON.stringify(input.candidates, null, 2)}
@@ -198,30 +374,28 @@ Ranking Guidelines:
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.apiKey}`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
-            responseMimeType: 'application/json',
+            responseMimeType: "application/json",
             temperature: 0.2,
           },
         }),
         signal: AbortSignal.timeout(6000),
-      }
+      },
     );
 
     if (res.ok) {
       const data = await res.json();
-      const rawText =
-        data.candidates?.[0]?.content?.parts?.[0]?.text;
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
       if (rawText) {
         const parsed = JSON.parse(rawText);
-        const validated =
-          aiRecommendationsOutputSchema.safeParse(parsed);
+        const validated = aiRecommendationsOutputSchema.safeParse(parsed);
 
         if (validated.success) {
           return validated.data.ranked_destinations;
@@ -236,20 +410,20 @@ Ranking Guidelines:
     const weatherSummary = input.weather?.forecast
       ?.map(
         (f) =>
-          `${f.dayOfWeek}: ${f.condition}, ${f.temperatureMax}°C / ${f.temperatureMin}°C, ${f.precipitationProbability}% rain`
+          `${f.dayOfWeek}: ${f.condition}, ${f.temperatureMax}°C / ${f.temperatureMin}°C, ${f.precipitationProbability}% rain`,
       )
-      .join('; ');
+      .join("; ");
 
     const serviceSummary = input.services
       ? `${input.services.fuel_stations.count} fuel stations, ${input.services.mechanics.count} mechanics, and ${input.services.hospitals.count} hospitals monitored along route`
-      : '';
+      : "";
 
     const prompt = `You are YatraSetu's flexible itinerary designer.
 Create a ${input.duration_days}-day relaxed, flexible travel itinerary for ${input.destination_name} (${input.destination_category}).
 Description: ${input.description}
-${input.vehicle_type ? `Vehicle: ${input.vehicle_type}` : ''}
-${weatherSummary ? `Verified 5-Day Weather Forecast: ${weatherSummary}` : ''}
-${serviceSummary ? `Route Emergency Readiness: ${serviceSummary}` : ''}
+${input.vehicle_type ? `Vehicle: ${input.vehicle_type}` : ""}
+${weatherSummary ? `Verified 5-Day Weather Forecast: ${weatherSummary}` : ""}
+${serviceSummary ? `Route Emergency Readiness: ${serviceSummary}` : ""}
 
 CRITICAL RULES:
 - DO NOT invent, calculate or alter verified meteorological weather numbers or route distances.
@@ -268,40 +442,30 @@ Instructions:
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.apiKey}`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
-            responseMimeType: 'application/json',
+            responseMimeType: "application/json",
             temperature: 0.3,
           },
         }),
         signal: AbortSignal.timeout(6000),
-      }
+      },
     );
 
     if (res.ok) {
       const data = await res.json();
-      const rawText =
-        data.candidates?.[0]?.content?.parts?.[0]?.text;
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
       if (rawText) {
         const parsed = JSON.parse(rawText);
-
-        const validated =
-          aiItineraryOutputSchema.safeParse(parsed);
+        const validated = aiItineraryOutputSchema.safeParse(parsed);
 
         if (validated.success) {
-          /*
-           * The AI schema does not contain `sequence`,
-           * but the application's ItineraryItem type requires it.
-           *
-           * Add a deterministic sequence number here so the
-           * AI response matches the application's internal type.
-           */
           return {
             summary: validated.data.summary,
             items: validated.data.items.map((item, index) => ({
@@ -317,7 +481,7 @@ Instructions:
   }
 
   private async callLiveAiForServices(
-    input: AiServicesProcessingInput
+    input: AiServicesProcessingInput,
   ): Promise<AiServiceReadinessBriefing | null> {
     const prompt = `You are YatraSetu's Road Safety and Emergency Travel Intelligence Engine.
 Analyze the live emergency facilities retrieved from Google Places along the traveler's highway route.
@@ -330,47 +494,41 @@ Route Context:
 
 Live Facilities Found Along Route:
 - Fuel Stations (${input.fuel_stations.length}): ${JSON.stringify(
-      input.fuel_stations
-        .slice(0, 8)
-        .map((p) => ({
-          name: p.name,
-          dist_km: p.distance_from_origin_km,
-          isOpen: p.is_open,
-          rating: p.rating,
-        })),
+      input.fuel_stations.slice(0, 8).map((p) => ({
+        name: p.name,
+        dist_km: p.distance_from_origin_km,
+        isOpen: p.is_open,
+        rating: p.rating,
+      })),
       null,
-      2
+      2,
     )}
 - 24/7 Mechanics & Garages (${input.mechanics.length}): ${JSON.stringify(
-      input.mechanics
-        .slice(0, 8)
-        .map((p) => ({
-          name: p.name,
-          dist_km: p.distance_from_origin_km,
-          isOpen: p.is_open,
-          rating: p.rating,
-        })),
+      input.mechanics.slice(0, 8).map((p) => ({
+        name: p.name,
+        dist_km: p.distance_from_origin_km,
+        isOpen: p.is_open,
+        rating: p.rating,
+      })),
       null,
-      2
+      2,
     )}
 - Emergency Hospitals (${input.hospitals.length}): ${JSON.stringify(
-      input.hospitals
-        .slice(0, 8)
-        .map((p) => ({
-          name: p.name,
-          dist_km: p.distance_from_origin_km,
-          isOpen: p.is_open,
-          rating: p.rating,
-        })),
+      input.hospitals.slice(0, 8).map((p) => ({
+        name: p.name,
+        dist_km: p.distance_from_origin_km,
+        isOpen: p.is_open,
+        rating: p.rating,
+      })),
       null,
-      2
+      2,
     )}
 
 Instructions:
 1. Evaluate the emergency readiness along this route:
    - safety_score: an integer from 0 to 100 based on density and availability of facilities for this ${input.vehicle_type} journey.
-   - readiness_level: "High" (well-covered with frequent fuel, mechanics, medical), "Moderate" (adequate but has stretches with fewer facilities), or "Low" (sparse emergency facilities).
-2. headline: A crisp 1-sentence headline summarizing route safety (e.g. "Excellent Highway Corridor with Frequent Fuel & Breakdown Support").
+   - readiness_level: "High", "Moderate", or "Low".
+2. headline: A crisp 1-sentence headline summarizing route safety.
 3. summary: A concise 2-sentence overview evaluating travel preparedness.
 4. coverage_analysis: 1-sentence specific assessments for fuel_assessment, mechanic_assessment, and hospital_assessment.
 5. actionable_tips: Array of 2-3 specific, actionable recommendations tailored for a ${input.vehicle_type} on this ${input.route_distance_km} km route.
@@ -395,31 +553,28 @@ Output strictly valid JSON matching this schema:
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.apiKey}`,
       {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
-            responseMimeType: 'application/json',
+            responseMimeType: "application/json",
             temperature: 0.2,
           },
         }),
         signal: AbortSignal.timeout(6000),
-      }
+      },
     );
 
     if (res.ok) {
       const data = await res.json();
-      const rawText =
-        data.candidates?.[0]?.content?.parts?.[0]?.text;
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
       if (rawText) {
         const parsed = JSON.parse(rawText);
-
-        const validated =
-          aiServiceReadinessOutputSchema.safeParse(parsed);
+        const validated = aiServiceReadinessOutputSchema.safeParse(parsed);
 
         if (validated.success) {
           return validated.data;
@@ -430,133 +585,109 @@ Output strictly valid JSON matching this schema:
     return null;
   }
 
-  /**
-   * Deterministic Multi-Factor Scoring Engine
-   * Guarantees robust, zero-downtime ranking.
-   */
   private generateDeterministicRanking(input: AiRankingInput) {
     return input.candidates
       .map((c) => {
         let score = 70;
         const reasons: string[] = [];
 
-        // 1. Distance scoring (100km preferred radius)
         if (c.distance_km <= 50) {
           score += 18;
-
           reasons.push(
-            `Ideal quick getaway at only ${c.distance_km} km (${c.duration_formatted}) from ${input.origin_label.split(',')[0]}`
+            `Ideal quick getaway at only ${c.distance_km} km (${c.duration_formatted}) from ${input.origin_label.split(",")[0]}`,
           );
         } else if (c.distance_km <= 100) {
           score += 12;
-
           reasons.push(
-            `Comfortably within the preferred 100 km radius at ${c.distance_km} km (${c.duration_formatted})`
+            `Comfortably within the preferred 100 km radius at ${c.distance_km} km (${c.duration_formatted})`,
           );
         } else {
-          // > 100 km
           if (input.duration_days >= 2) {
             score += 4;
-
             reasons.push(
-              `Extended ${c.distance_km} km drive (${c.duration_formatted}) well justified for a ${input.duration_days}-day trip`
+              `Extended ${c.distance_km} km drive (${c.duration_formatted}) well justified for a ${input.duration_days}-day trip`,
             );
           } else {
             score -= 12;
-
             reasons.push(
-              `Longer distance (${c.distance_km} km, ~${c.duration_formatted}) for a 1-day trip; early morning start advised`
+              `Longer distance (${c.distance_km} km, ~${c.duration_formatted}) for a 1-day trip; early morning start advised`,
             );
           }
         }
 
-        // 2. Vehicle-Specific Alignment
-        if (input.vehicle_type === 'bike') {
+        if (input.vehicle_type === "bike") {
           if (
-            c.category.includes('Hill') ||
-            c.category.includes('Nature') ||
-            c.road_condition.toLowerCase().includes('scenic') ||
-            c.road_condition.toLowerCase().includes('ghat')
+            c.category.includes("Hill") ||
+            c.category.includes("Nature") ||
+            c.road_condition.toLowerCase().includes("scenic") ||
+            c.road_condition.toLowerCase().includes("ghat")
           ) {
             score += 10;
             reasons.push(
-              'Scenic curves and mountain ghats offer an exhilarating motorcycle ride'
+              "Scenic curves and mountain ghats offer an exhilarating motorcycle ride",
             );
           } else {
             score += 4;
             reasons.push(
-              'Smooth paved highway corridors well-suited for two-wheelers'
+              "Smooth paved highway corridors well-suited for two-wheelers",
             );
           }
-        } else if (input.vehicle_type === 'suv') {
+        } else if (input.vehicle_type === "suv") {
           if (
-            c.category.includes('Wildlife') ||
-            c.category.includes('Hill') ||
-            c.road_condition.toLowerCase().includes('ghat')
+            c.category.includes("Wildlife") ||
+            c.category.includes("Hill") ||
+            c.road_condition.toLowerCase().includes("ghat")
           ) {
             score += 10;
             reasons.push(
-              'High ground clearance and power are ideal for this terrain'
+              "High ground clearance and power are ideal for this terrain",
             );
           } else {
             score += 5;
-            reasons.push(
-              'Spacious and smooth long-distance cruising'
-            );
+            reasons.push("Spacious and smooth long-distance cruising");
           }
-        } else if (input.vehicle_type === 'bus') {
+        } else if (input.vehicle_type === "bus") {
           if (
-            c.road_condition.toLowerCase().includes('highway') ||
-            c.road_condition.toLowerCase().includes('expressway') ||
-            c.road_condition.toLowerCase().includes('4-lane')
+            c.road_condition.toLowerCase().includes("highway") ||
+            c.road_condition.toLowerCase().includes("expressway") ||
+            c.road_condition.toLowerCase().includes("4-lane")
           ) {
             score += 8;
             reasons.push(
-              'Frequent direct intercity bus schedules and highway connectivity'
+              "Frequent direct intercity bus schedules and highway connectivity",
             );
           } else {
             score += 2;
             reasons.push(
-              'Connecting bus services available from regional hubs'
+              "Connecting bus services available from regional hubs",
             );
           }
         } else {
-          // Car
           if (
-            c.road_condition.toLowerCase().includes('smooth') ||
-            c.road_condition.toLowerCase().includes('highway') ||
-            c.road_condition.toLowerCase().includes('4-lane')
+            c.road_condition.toLowerCase().includes("smooth") ||
+            c.road_condition.toLowerCase().includes("highway") ||
+            c.road_condition.toLowerCase().includes("4-lane")
           ) {
             score += 8;
             reasons.push(
-              'Well-paved dual carriageway ensures an effortless drive'
+              "Well-paved dual carriageway ensures an effortless drive",
             );
           }
         }
 
-        // 3. Duration alignment
-        if (
-          input.duration_days === 1 &&
-          c.distance_km <= 75
-        ) {
+        if (input.duration_days === 1 && c.distance_km <= 75) {
           score += 5;
         } else if (
           input.duration_days > 1 &&
-          (c.category.includes('Hill') ||
-            c.category.includes('Wildlife') ||
-            c.category.includes('UNESCO'))
+          (c.category.includes("Hill") ||
+            c.category.includes("Wildlife") ||
+            c.category.includes("UNESCO"))
         ) {
           score += 6;
         }
 
-        const clampedScore = Math.min(
-          99,
-          Math.max(40, score)
-        );
-
-        const aiReason =
-          reasons.slice(0, 2).join('. ') + '.';
-
+        const clampedScore = Math.min(99, Math.max(40, score));
+        const aiReason = reasons.slice(0, 2).join(". ") + ".";
         const isExtended = c.distance_km > 100;
 
         return {
@@ -572,9 +703,6 @@ Output strictly valid JSON matching this schema:
       .sort((a, b) => b.match_score - a.match_score);
   }
 
-  /**
-   * Deterministic Flexible Itinerary Builder
-   */
   private generateDeterministicItinerary(input: AiItineraryInput) {
     const days = Math.max(1, input.duration_days);
     const items: ItineraryItem[] = [];
@@ -584,11 +712,11 @@ Output strictly valid JSON matching this schema:
         day_number: 1,
         title: `Explore Highlights of ${input.destination_name}`,
         description: `Arrive in the morning, tour the iconic ${input.destination_category} landmarks, capture photographs, and enjoy authentic local culinary specialties before an easy evening return.`,
-        timing_suggestion: '8:30 AM - 5:30 PM',
+        timing_suggestion: "8:30 AM - 5:30 PM",
         activities: [
-          'Monument walkthrough',
-          'Local market & craft visit',
-          'Sunset viewpoint',
+          "Monument walkthrough",
+          "Local market & craft visit",
+          "Sunset viewpoint",
         ],
         sequence: 1,
       });
@@ -598,58 +726,53 @@ Output strictly valid JSON matching this schema:
           day_number: 1,
           title: `Arrival & Core Heritage Highlights`,
           description: `Morning scenic drive to ${input.destination_name}. Check into your stay and spend the afternoon exploring primary heritage structures and viewpoints.`,
-          timing_suggestion: 'Morning to Late Afternoon',
+          timing_suggestion: "Morning to Late Afternoon",
           activities: [
-            'Scenic road trip',
-            'Primary site exploration',
-            'Evening cultural aarti / sound & light show',
+            "Scenic road trip",
+            "Primary site exploration",
+            "Evening cultural aarti / sound & light show",
           ],
           sequence: 1,
         },
         {
           day_number: 2,
           title: `Nature Trails, Local Crafts & Departure`,
-          description:
-            `Enjoy a crisp morning nature trail or temple visit. Sample traditional breakfast, explore artisanal handicraft stalls, and begin a relaxed return journey.`,
-          timing_suggestion:
-            'Early Morning to Late Afternoon',
+          description: `Enjoy a crisp morning nature trail or temple visit. Sample traditional breakfast, explore artisanal handicraft stalls, and begin a relaxed return journey.`,
+          timing_suggestion: "Early Morning to Late Afternoon",
           activities: [
-            'Sunrise trail / boat ride',
-            'Handloom & souvenir shopping',
-            'Return highway drive',
+            "Sunrise trail / boat ride",
+            "Handloom & souvenir shopping",
+            "Return highway drive",
           ],
           sequence: 2,
-        }
+        },
       );
     } else {
-      // 3+ days
       items.push(
         {
           day_number: 1,
           title: `Scenic Drive & Landmark Discovery`,
-          description:
-            `Arrive via highway, check into your retreat, and take an introductory tour of the main archaeological and architectural marvels.`,
-          timing_suggestion: '9:00 AM - 5:00 PM',
+          description: `Arrive via highway, check into your retreat, and take an introductory tour of the main archaeological and architectural marvels.`,
+          timing_suggestion: "9:00 AM - 5:00 PM",
           activities: [
-            'Arrival & check-in',
-            'Main complex tour',
-            'Sunset vantage point',
+            "Arrival & check-in",
+            "Main complex tour",
+            "Sunset vantage point",
           ],
           sequence: 1,
         },
         {
           day_number: 2,
           title: `Deep Cultural Immersion & Nature Safaris`,
-          description:
-            `Dedicate a full day to immersive experiences—guided heritage walks, waterfalls, river ghats or forest safaris with local storytellers.`,
-          timing_suggestion: 'Full Day (Flexible)',
+          description: `Dedicate a full day to immersive experiences—guided heritage walks, waterfalls, river ghats or forest safaris with local storytellers.`,
+          timing_suggestion: "Full Day (Flexible)",
           activities: [
-            'Guided heritage/nature trail',
-            'Local cuisine lunch',
-            'Photography session',
+            "Guided heritage/nature trail",
+            "Local cuisine lunch",
+            "Photography session",
           ],
           sequence: 2,
-        }
+        },
       );
 
       for (let d = 3; d <= days; d++) {
@@ -663,11 +786,11 @@ Output strictly valid JSON matching this schema:
             d === days
               ? `Visit traditional craft communities, savor regional breakfast, and wrap up with a picturesque return drive.`
               : `Discover tranquil surrounding rural temples, hidden viewpoints, and serene river banks at your own pace.`,
-          timing_suggestion: 'Morning to Afternoon',
+          timing_suggestion: "Morning to Afternoon",
           activities: [
-            'Village/handloom visit',
-            'Relaxed cafe lunch',
-            'Smooth return drive',
+            "Village/handloom visit",
+            "Relaxed cafe lunch",
+            "Smooth return drive",
           ],
           sequence: d,
         });
@@ -675,83 +798,48 @@ Output strictly valid JSON matching this schema:
     }
 
     return {
-      summary: `A carefully paced ${days}-day itinerary for ${input.destination_name} crafted for ${input.vehicle_type || 'vehicle'} travel, balancing core sightseeing, authentic local flavors, and relaxed transit.`,
+      summary: `A carefully paced ${days}-day itinerary for ${input.destination_name} crafted for ${input.vehicle_type || "vehicle"} travel, balancing core sightseeing, authentic local flavors, and relaxed transit.`,
       items,
     };
   }
 
-  /**
-   * Deterministic Service Readiness Briefing Engine
-   */
   private generateDeterministicServiceBriefing(
-    input: AiServicesProcessingInput
+    input: AiServicesProcessingInput,
   ): AiServiceReadinessBriefing {
     const fuelCount = input.fuel_stations.length;
     const mechCount = input.mechanics.length;
     const hospCount = input.hospitals.length;
-    const totalCount =
-      fuelCount + mechCount + hospCount;
+    const totalCount = fuelCount + mechCount + hospCount;
 
     let score = 65;
 
-    if (fuelCount >= 3) {
-      score += 12;
-    } else if (fuelCount >= 1) {
-      score += 6;
-    } else {
-      score -= 15;
-    }
+    if (fuelCount >= 3) score += 12;
+    else if (fuelCount >= 1) score += 6;
+    else score -= 15;
 
-    if (mechCount >= 2) {
-      score += 10;
-    } else if (mechCount >= 1) {
-      score += 5;
-    } else {
-      score -= 10;
-    }
+    if (mechCount >= 2) score += 10;
+    else if (mechCount >= 1) score += 5;
+    else score -= 10;
 
-    if (hospCount >= 2) {
-      score += 10;
-    } else if (hospCount >= 1) {
-      score += 5;
-    } else {
-      score -= 10;
-    }
+    if (hospCount >= 2) score += 10;
+    else if (hospCount >= 1) score += 5;
+    else score -= 10;
 
-    if (
-      input.route_distance_km > 200 &&
-      fuelCount < 2
-    ) {
+    if (input.route_distance_km > 200 && fuelCount < 2) {
       score -= 8;
     }
 
-    const safetyScore = Math.min(
-      98,
-      Math.max(35, score)
-    );
+    const safetyScore = Math.min(98, Math.max(35, score));
+    const readinessLevel: "High" | "Moderate" | "Low" =
+      safetyScore >= 80 ? "High" : safetyScore >= 60 ? "Moderate" : "Low";
 
-    const readinessLevel:
-      | 'High'
-      | 'Moderate'
-      | 'Low' =
-      safetyScore >= 80
-        ? 'High'
-        : safetyScore >= 60
-          ? 'Moderate'
-          : 'Low';
-
-    const originCity = input.origin_label
-      .split(',')[0]
-      .trim();
-
-    const destCity = input.destination_name
-      .split(' ')[0]
-      .trim();
+    const originCity = input.origin_label.split(",")[0].trim();
+    const destCity = input.destination_name.split(" ")[0].trim();
 
     const headline =
-      readinessLevel === 'High'
+      readinessLevel === "High"
         ? `Excellent Highway Support Corridor between ${originCity} and ${destCity}`
-        : readinessLevel === 'Moderate'
+        : readinessLevel === "Moderate"
           ? `Adequate Emergency Readiness with Strategic Stops between ${originCity} and ${destCity}`
           : `Caution: Limited Direct Support Facilities on Route to ${destCity}`;
 
@@ -762,49 +850,48 @@ Output strictly valid JSON matching this schema:
 
     const fuelAssessment =
       fuelCount > 0
-        ? `${fuelCount} operational fuel station${fuelCount > 1 ? 's' : ''} detected along the highway alignment.`
+        ? `${fuelCount} operational fuel station${fuelCount > 1 ? "s" : ""} detected along the highway alignment.`
         : `Limited branded fuel stations along immediate route; tank up before departure.`;
 
     const mechanicAssessment =
       mechCount > 0
-        ? `${mechCount} auto repair / puncture garage${mechCount > 1 ? 's' : ''} accessible along the transit corridor.`
+        ? `${mechCount} auto repair / puncture garage${mechCount > 1 ? "s" : ""} accessible along the transit corridor.`
         : `No direct 24/7 mechanics verified on this segment; carry essential spare tools and tyre inflator.`;
 
     const hospitalAssessment =
       hospCount > 0
-        ? `${hospCount} emergency medical centre${hospCount > 1 ? 's' : ''} situated within response radius.`
+        ? `${hospCount} emergency medical centre${hospCount > 1 ? "s" : ""} situated within response radius.`
         : `Major medical facilities located in primary urban hubs at ${originCity} and ${destCity}.`;
 
     const tips: string[] = [];
 
-    if (input.vehicle_type === 'bike') {
+    if (input.vehicle_type === "bike") {
       tips.push(
-        'Check tyre pressure and carry a compact puncture kit before riding highway ghats.'
+        "Check tyre pressure and carry a compact puncture kit before riding highway ghats.",
       );
       tips.push(
-        'Hydrate and plan rest stops at verified fuel plazas every 60-80 km.'
+        "Hydrate and plan rest stops at verified fuel plazas every 60-80 km.",
       );
-    } else if (input.vehicle_type === 'suv') {
+    } else if (input.vehicle_type === "suv") {
       tips.push(
-        'Ideal ground clearance for regional roads; ensure 4x4 fluid levels are checked for hilly sections.'
-      );
-      tips.push(
-        'Top up washer fluid and verify spare tyre condition before long stretches.'
-      );
-    } else if (input.vehicle_type === 'bus') {
-      tips.push(
-        'Ensure schedule alignment with major highway toll interchange stops.'
+        "Ideal ground clearance for regional roads; ensure 4x4 fluid levels are checked for hilly sections.",
       );
       tips.push(
-        'Confirm passenger refreshment stops at designated commercial plazas.'
+        "Top up washer fluid and verify spare tyre condition before long stretches.",
+      );
+    } else if (input.vehicle_type === "bus") {
+      tips.push(
+        "Ensure schedule alignment with major highway toll interchange stops.",
+      );
+      tips.push(
+        "Confirm passenger refreshment stops at designated commercial plazas.",
       );
     } else {
-      // Car
       tips.push(
-        'Ensure fuel tank is at least half full before departing major city limits.'
+        "Ensure fuel tank is at least half full before departing major city limits.",
       );
       tips.push(
-        'Save 108 emergency ambulance and national highway breakdown helpline numbers.'
+        "Save 108 emergency ambulance and national highway breakdown helpline numbers.",
       );
     }
 

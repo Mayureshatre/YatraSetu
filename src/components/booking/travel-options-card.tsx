@@ -3,6 +3,7 @@
 import * as React from "react";
 import { BusBookingRedirectInfo, CabBookingRedirectInfo } from "@/types";
 import { Button } from "@/components/ui/button";
+import { VehicleCompatibilitySection } from "@/components/destination/vehicleCompatibilitySection";
 
 interface TravelOptionsCardProps {
   busRedirect?: BusBookingRedirectInfo | null;
@@ -58,7 +59,11 @@ export function TravelOptionsCard({
           <span className="text-xl">🚍</span>
           <span className="text-xs font-bold">Intercity Bus</span>
           <span
-            className={`text-[10px] ${activeTab === "bus" ? "text-emerald-100" : "text-slate-400 dark:text-slate-500"}`}
+            className={`text-[10px] ${
+              activeTab === "bus"
+                ? "text-emerald-100"
+                : "text-slate-400 dark:text-slate-500"
+            }`}
           >
             RedBus / Transport
           </span>
@@ -76,7 +81,11 @@ export function TravelOptionsCard({
           <span className="text-xl">🚕</span>
           <span className="text-xs font-bold">Cab & Auto</span>
           <span
-            className={`text-[10px] ${activeTab === "cab" ? "text-emerald-100" : "text-slate-400 dark:text-slate-500"}`}
+            className={`text-[10px] ${
+              activeTab === "cab"
+                ? "text-emerald-100"
+                : "text-slate-400 dark:text-slate-500"
+            }`}
           >
             {isCabSuitable ? "Rapido (≤100 km)" : "Rapido Intercity"}
           </span>
@@ -94,7 +103,11 @@ export function TravelOptionsCard({
           <span className="text-xl">🚗</span>
           <span className="text-xs font-bold">Self Drive</span>
           <span
-            className={`text-[10px] ${activeTab === "drive" ? "text-slate-300" : "text-slate-400 dark:text-slate-500"}`}
+            className={`text-[10px] ${
+              activeTab === "drive"
+                ? "text-slate-300"
+                : "text-slate-400 dark:text-slate-500"
+            }`}
           >
             Live Route Map
           </span>
@@ -149,13 +162,7 @@ export function TravelOptionsCard({
               <span className="text-sm font-bold text-slate-900 dark:text-slate-100">
                 Rapido On-Demand Cabs
               </span>
-              <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                  isCabSuitable
-                    ? "bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-900/50 dark:text-emerald-300 dark:border-emerald-700/50"
-                    : "bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-900/50 dark:text-emerald-300 dark:border-emerald-700/50"
-                }`}
-              >
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-900/50 dark:text-emerald-300 dark:border-emerald-700/50">
                 {isCabSuitable
                   ? "✓ Recommended for this distance"
                   : "Distance > 100 km"}
@@ -203,23 +210,38 @@ export function TravelOptionsCard({
 
       {/* Tab 3: Self Drive */}
       {activeTab === "drive" && (
-        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 dark:bg-slate-800/50 dark:border-slate-700/80 space-y-2.5 text-xs text-slate-700 dark:text-slate-300">
-          <div className="flex items-center justify-between font-bold text-slate-900 dark:text-slate-100">
-            <span>🚗 Self-Drive Route Readiness</span>
-            <span>
-              {distanceKm} km • ~{durationFormatted}
-            </span>
+        <div className="space-y-4">
+          {/* Route Overview Header Box */}
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 dark:bg-slate-800/50 dark:border-slate-700/80 space-y-2.5 text-xs text-slate-700 dark:text-slate-300">
+            <div className="flex items-center justify-between font-bold text-slate-900 dark:text-slate-100">
+              <span>🚗 Self-Drive Route Readiness</span>
+              <span>
+                {distanceKm} km • ~{durationFormatted}
+              </span>
+            </div>
+            <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+              Paved highway corridors with regular rest stops and emergency
+              assistance points. Check the interactive map and road safety
+              advice below before beginning your drive.
+            </p>
+            <div className="flex items-center gap-4 text-[11px] text-slate-500 dark:text-slate-500 pt-1">
+              <span>⛽ Fuel stations monitored along route</span>
+              <span>•</span>
+              <span>🔧 24/7 mechanics mapped</span>
+            </div>
           </div>
-          <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-            Paved highway corridors with regular rest stops and emergency
-            assistance points. Check the interactive map and road safety advice
-            below before beginning your drive.
-          </p>
-          <div className="flex items-center gap-4 text-[11px] text-slate-500 dark:text-slate-500 pt-1">
-            <span>⛽ Fuel stations monitored along route</span>
-            <span>•</span>
-            <span>🔧 24/7 mechanics mapped</span>
-          </div>
+
+          {/* AI Vehicle Compatibility Score Evaluator */}
+          <VehicleCompatibilitySection
+            destination={{
+              name: destinationName || "Selected Destination",
+              highAltitude: distanceKm > 150,
+              unpavedRoadsPercent: 20,
+              waterCrossings: false,
+              terrainSummary:
+                "Paved highways and regional connecting corridors",
+            }}
+          />
         </div>
       )}
     </div>
