@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { SubmitDestinationModal } from "@/components/community/submit-destination-modal";
 
 export default function CommunityFeedPage() {
-  const { user } = useAuth();
+  const { user, signInWithGoogle } = useAuth();
   const [posts, setPosts] = React.useState<CommunityPost[]>([]);
   const [destinations, setDestinations] = React.useState<Destination[]>([]);
   const [selectedCategory, setSelectedCategory] = React.useState<string>("All");
@@ -113,17 +113,29 @@ export default function CommunityFeedPage() {
         <Button
           variant="primary"
           size="md"
-          onClick={() => setShowCreateModal(true)}
+          onClick={() => {
+            if (!user) {
+              signInWithGoogle();
+              return;
+            }
+            setShowCreateModal(true);
+          }}
           className="gap-1.5 shrink-0 shadow-sm font-bold"
         >
           <span>+</span>
-          <span>Start a Discussion</span>
+          <span>{user ? "Start a Discussion" : "Sign-In to post"}</span>
         </Button>
       </div>
 
       {/* Interactive Contribution Card */}
       <div
-        onClick={() => setIsSubmitModalOpen(true)}
+        onClick={() => {
+          if (!user) {
+            signInWithGoogle();
+            return;
+          }
+          setIsSubmitModalOpen(true);
+        }}
         className="group relative cursor-pointer overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/30 hover:border-emerald-500/60 p-6 shadow-xl transition-all duration-300 hover:shadow-2xl hover:shadow-emerald-950/50"
       >
         <div className="absolute inset-0 bg-emerald-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
@@ -267,9 +279,15 @@ export default function CommunityFeedPage() {
               <Button
                 size="sm"
                 variant="primary"
-                onClick={() => setShowCreateModal(true)}
+                onClick={() => {
+                  if (!user) {
+                    signInWithGoogle();
+                    return;
+                  }
+                  setShowCreateModal(true);
+                }}
               >
-                + Create Discussion
+                {user ? "+ Create Discussion" : "Sign-In to post"}
               </Button>
             </div>
           ) : (

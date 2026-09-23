@@ -2,6 +2,83 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/supabase";
 import { reviewUpdateSchema } from "@/lib/validation/schemas";
 import { createErrorResponse } from "@/lib/utils";
+import { createClient } from "@supabase/supabase-js";
+
+export const dynamic = "force-dynamic";
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+    const body = await req.json();
+
+    console.log("📥 Received review submission:", body);
+
+    // 1. Basic validation
+    if (!body.overall_score || !body.user_id) {
+      const { response, status } = createErrorResponse(
+        "VALIDATION_ERROR",
+        "Missing required fields: overall_score and user_id",
+        undefined,
+        400,
+      );
+      return NextResponse.json(response, { status });
+    }
+
+    // 2. Ensure user_id is a valid UUID for Supabase PostgreSQL
+    // If logged in via demo mode ('auth-traveler-01'), map to a valid UUID format
+    const isValidUUID =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        body.user_id,
+      );
+    const dbUserId = isValidUUID
+      ? body.user_id
+      : "11111111-0001-0001-0001-000000000001";
+
+    // 3. Insert into Supabase
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    );
+
+    const { data, error } = await supabase
+      .from("reviews")
+      .insert({
+        destination_id: id,
+        user_id: dbUserId,
+        overall_score: body.overall_score,
+        category_scores: body.category_scores,
+        body: body.body || "",
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("❌ Supabase DB Insert Error:", error);
+      const { response, status } = createErrorResponse(
+        "SERVER_ERROR",
+        error.message || "Failed to create review",
+        { details: error },
+        400,
+      );
+      return NextResponse.json(response, { status });
+    }
+
+    console.log("✅ Review created successfully:", data);
+    return NextResponse.json({ data }, { status: 201 });
+  } catch (error: any) {
+    console.error("❌ Server Error:", error);
+    const { response, status } = createErrorResponse(
+      "SERVER_ERROR",
+      "Failed to process review submission",
+      { details: error.message },
+      500,
+    );
+    return NextResponse.json(response, { status });
+  }
+}
 
 export async function PATCH(
   req: NextRequest,

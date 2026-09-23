@@ -1066,7 +1066,13 @@ class MemoryDatabase {
         .select(`*, profiles(display_name, avatar_url)`)
         .eq("destination_id", destinationId)
         .order("created_at", { ascending: false });
-      if (!error && data) {
+
+      // 🚨 LOG THE ERROR SO WE CAN SEE IT!
+      if (error) {
+        console.error("❌ SUPABASE SELECT ERROR:", error);
+      }
+
+      if (data && !error) {
         return data.map((r: any) => ({
           ...r,
           user_name: r.profiles?.display_name || "Traveler",
@@ -1074,6 +1080,8 @@ class MemoryDatabase {
         }));
       }
     }
+
+    console.warn("⚠️ Falling back to mock data because Supabase fetch failed.");
     return this.reviews.filter((r) => r.destination_id === destinationId);
   }
 
@@ -1084,7 +1092,16 @@ class MemoryDatabase {
         .select(`*, profiles(display_name, avatar_url)`)
         .eq("id", id)
         .single();
-      if (!error && data) {
+
+      // 🚨 LOG THE ERROR SO WE CAN SEE IT!
+      if (error) {
+        console.error(
+          `❌ SUPABASE SELECT ERROR (getReviewById for ${id}):`,
+          error,
+        );
+      }
+
+      if (data && !error) {
         return {
           ...data,
           user_name: data.profiles?.display_name || "Traveler",
@@ -1092,17 +1109,16 @@ class MemoryDatabase {
         };
       }
     }
+
+    console.warn(
+      `⚠️ Falling back to mock data for review ${id} because Supabase fetch failed.`,
+    );
     return this.reviews.find((r) => r.id === id) || null;
   }
 
   async createReview(
     review: Omit<DestinationReview, "id" | "created_at">,
   ): Promise<DestinationReview> {
-    const newReview: DestinationReview = {
-      ...review,
-      id: generateId("rev"),
-      created_at: new Date().toISOString(),
-    };
     if (supabase) {
       const { data, error } = await supabase
         .from("reviews")
@@ -1115,72 +1131,84 @@ class MemoryDatabase {
         })
         .select()
         .single();
-      if (!error && data) return { ...data, user_name: review.user_name };
+
+      // 🚨 DO NOT SILENTLY MOCK ON ERROR. THROW IT SO WE CAN SEE IT. 🚨
+      if (error) {
+        console.error("❌ SUPABASE REJECTED REVIEW:", error);
+        throw new Error(`Database Error: ${error.message}`);
+      }
+
+      if (data) return { ...data, user_name: review.user_name };
     }
+
+    // Fallback ONLY if the Supabase client entirely failed to initialize
+    console.warn(
+      "⚠️ Warning: Supabase client missing, falling back to local mock data.",
+    );
+    const newReview: DestinationReview = {
+      ...review,
+      id: generateId("rev"),
+      created_at: new Date().toISOString(),
+    };
     this.reviews.unshift(newReview);
     return newReview;
   }
 
   async updateReview(
-    reviewId: string,
+    destinationId: string,
     userId: string,
-    updates: Partial<
-      Pick<DestinationReview, "overall_score" | "category_scores" | "body">
-    >,
+    updates: Partial<DestinationReview>,
   ): Promise<{
     success: boolean;
     review?: DestinationReview;
     error?: string;
     status: number;
   }> {
-    const existing = await this.getReviewById(reviewId);
-    if (!existing) {
+    if (!supabase) {
       return {
         success: false,
-        error: `Review '${reviewId}' not found`,
+        error: "Supabase client not initialized",
+        status: 500,
+      };
+    }
+
+    // 1. Perform the update matching both destination and user
+    const { data, error } = await supabase
+      .from("reviews")
+      .update({
+        ...(updates.overall_score !== undefined && {
+          overall_score: updates.overall_score,
+        }),
+        ...(updates.category_scores !== undefined && {
+          category_scores: updates.category_scores,
+        }),
+        ...(updates.body !== undefined && { body: updates.body }),
+      })
+      .eq("destination_id", destinationId)
+      .eq("user_id", userId)
+      .select(`*, profiles(display_name, avatar_url)`)
+      .single();
+
+    if (error) {
+      console.error("❌ Failed to update review:", error);
+      return { success: false, error: error.message, status: 400 };
+    }
+
+    if (!data) {
+      return {
+        success: false,
+        error: "Review not found or unauthorized",
         status: 404,
       };
     }
-    if (existing.user_id !== userId) {
-      return {
-        success: false,
-        error: "Forbidden: You do not have permission to modify this review",
-        status: 403,
-      };
-    }
 
-    const updated: DestinationReview = {
-      ...existing,
-      ...updates,
-      updated_at: new Date().toISOString(),
+    const formattedReview: DestinationReview = {
+      ...data,
+      user_name: data.profiles?.display_name || "Traveler",
+      user_avatar: data.profiles?.avatar_url || null,
     };
 
-    if (supabase) {
-      const { data, error } = await supabase
-        .from("reviews")
-        .update({
-          overall_score: updated.overall_score,
-          category_scores: updated.category_scores,
-          body: updated.body,
-          updated_at: updated.updated_at,
-        })
-        .eq("id", reviewId)
-        .eq("user_id", userId)
-        .select()
-        .single();
-      if (!error && data)
-        return {
-          success: true,
-          review: { ...data, user_name: existing.user_name },
-          status: 200,
-        };
-    }
-
-    const index = this.reviews.findIndex((r) => r.id === reviewId);
-    if (index !== -1) {
-      this.reviews[index] = updated;
-    }
-    return { success: true, review: updated, status: 200 };
+    return { success: true, review: formattedReview, status: 200 };
   }
 
   async deleteReview(

@@ -30,7 +30,7 @@ export default function DestinationDetailPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { user, userLocation } = useAuth();
+  const { user, userLocation, signInWithGoogle } = useAuth();
   const destinationId = params.id as string;
 
   const urlOriginLat = searchParams.get("origin_lat");
@@ -57,6 +57,11 @@ export default function DestinationDetailPage() {
   );
   const [services, setServices] =
     React.useState<DestinationServicesData | null>(null);
+  const [mapServices, setMapServices] = React.useState<{
+    fuel?: any[];
+    mechanic?: any[];
+    hospital?: any[];
+  } | null>(null);
   const [communityData, setCommunityData] = React.useState<any>(null);
   const [itinerary, setItinerary] = React.useState<FlexibleItinerary | null>(
     null,
@@ -83,7 +88,9 @@ export default function DestinationDetailPage() {
     setError(null);
 
     try {
-      const destRes = await fetch(`/api/destinations/${destinationId}`);
+      const destRes = await fetch(`/api/destinations/${destinationId}`, {
+        cache: "no-store",
+      });
       if (!destRes.ok) throw new Error("Destination not found");
       const destJson = await destRes.json();
       const dest: Destination = destJson.data;
@@ -93,29 +100,69 @@ export default function DestinationDetailPage() {
       const destCityName = dest.name.split(" ")[0].trim();
 
       setIsWeatherLoading(true);
-      const [srvRes, weatherRes, commRes, routeRes, busRes, cabRes] =
-        await Promise.allSettled([
-          fetch(
-            `/api/destinations/${dest.id}/services?origin_lat=${origin.latitude}&origin_lng=${origin.longitude}&origin_label=${encodeURIComponent(origin.label)}&vehicle_type=${vehicleType}`,
-          ),
-          fetch(
-            `/api/destinations/${dest.id}/weather?lat=${dest.latitude}&lng=${dest.longitude}`,
-          ),
-          fetch(`/api/destinations/${dest.id}/community`),
-          fetch(
-            `/api/routes?origin_lat=${origin.latitude}&origin_lng=${origin.longitude}&dest_lat=${dest.latitude}&dest_lng=${dest.longitude}&vehicle_type=${vehicleType}`,
-          ),
-          fetch(
-            `/api/booking/bus?origin_city=${encodeURIComponent(originCityName)}&destination_city=${encodeURIComponent(destCityName)}`,
-          ),
-          fetch(
-            `/api/booking/cab?origin_city=${encodeURIComponent(originCityName)}&destination_city=${encodeURIComponent(destCityName)}`,
-          ),
-        ]);
+      const [
+        srvRes,
+        facilityRes,
+        weatherRes,
+        commRes,
+        routeRes,
+        busRes,
+        cabRes,
+      ] = await Promise.allSettled([
+        fetch(
+          `/api/destinations/${dest.id}/services?origin_lat=${origin.latitude}&origin_lng=${origin.longitude}&origin_label=${encodeURIComponent(origin.label)}&vehicle_type=${vehicleType}`,
+          { cache: "no-store" },
+        ),
+        fetch(
+          `/api/destinations/${dest.id}/facilities?lat=${dest.latitude}&lng=${dest.longitude}`,
+          { cache: "no-store" },
+        ),
+        fetch(
+          `/api/destinations/${dest.id}/weather?lat=${dest.latitude}&lng=${dest.longitude}`,
+          { cache: "no-store" },
+        ),
+        fetch(`/api/destinations/${dest.id}/community`, {
+          cache: "no-store",
+        }),
+        fetch(
+          `/api/routes?origin_lat=${origin.latitude}&origin_lng=${origin.longitude}&dest_lat=${dest.latitude}&dest_lng=${dest.longitude}&vehicle_type=${vehicleType}`,
+          { cache: "no-store" },
+        ),
+        fetch(
+          `/api/booking/bus?origin_city=${encodeURIComponent(originCityName)}&destination_city=${encodeURIComponent(destCityName)}`,
+          { cache: "no-store" },
+        ),
+        fetch(
+          `/api/booking/cab?origin_city=${encodeURIComponent(originCityName)}&destination_city=${encodeURIComponent(destCityName)}`,
+          { cache: "no-store" },
+        ),
+      ]);
 
       if (srvRes.status === "fulfilled" && srvRes.value.ok) {
         const json = await srvRes.value.json();
         setServices(json.data);
+      }
+      if (facilityRes.status === "fulfilled" && facilityRes.value.ok) {
+        try {
+          const json = await facilityRes.value.json();
+          setMapServices({
+            fuel: json.data?.fuel_stations?.places || [],
+            mechanic: json.data?.mechanics?.places || [],
+            hospital: json.data?.hospitals?.places || [],
+          });
+        } catch {
+          setMapServices({
+            fuel: [],
+            mechanic: [],
+            hospital: [],
+          });
+        }
+      } else {
+        setMapServices({
+          fuel: [],
+          mechanic: [],
+          hospital: [],
+        });
       }
       if (weatherRes.status === "fulfilled" && weatherRes.value.ok) {
         const json = await weatherRes.value.json();
@@ -192,7 +239,12 @@ export default function DestinationDetailPage() {
         user_avatar: user?.avatar_url,
       }),
     });
-    const commRes = await fetch(`/api/destinations/${destinationId}/community`);
+    const commRes = await fetch(
+      `/api/destinations/${destinationId}/community`,
+      {
+        cache: "no-store",
+      },
+    );
     if (commRes.ok) {
       const json = await commRes.json();
       setCommunityData(json.data);
@@ -277,16 +329,28 @@ export default function DestinationDetailPage() {
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => setShowReviewModal(true)}
+              onClick={() => {
+                if (!user) {
+                  signInWithGoogle();
+                  return;
+                }
+                setShowReviewModal(true);
+              }}
             >
-              ★ Rate & Review
+              {user ? "★ Rate & Review" : "Sign in to Review"}
             </Button>
             <Button
               size="sm"
               variant="primary"
-              onClick={() => setShowPostModal(true)}
+              onClick={() => {
+                if (!user) {
+                  signInWithGoogle();
+                  return;
+                }
+                setShowPostModal(true);
+              }}
             >
-              + Share Story
+              {user ? "+ Share Story" : "Sign in to Post"}
             </Button>
           </div>
         </div>
@@ -326,13 +390,14 @@ export default function DestinationDetailPage() {
             distanceKm={routeInfo?.distance_km ?? 0}
             durationFormatted={routeInfo?.duration_formatted ?? ""}
             services={
-              services
+              mapServices ||
+              (services
                 ? {
                     fuel: services.fuel_stations.places,
                     mechanic: services.mechanics.places,
                     hospital: services.hospitals.places,
                   }
-                : undefined
+                : undefined)
             }
           />
 
@@ -437,6 +502,7 @@ export default function DestinationDetailPage() {
         onClose={() => setShowReviewModal(false)}
         destinationId={destination.id}
         destinationName={destination.name}
+        reviews={communityData?.reviews || []}
         onReviewSubmitted={loadAllData}
       />
 

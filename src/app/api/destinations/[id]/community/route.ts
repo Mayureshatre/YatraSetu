@@ -1,16 +1,20 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db/supabase';
-import { createErrorResponse } from '@/lib/utils';
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db/supabase";
+import { createErrorResponse } from "@/lib/utils";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { id } = await context.params;
+
     const [reviews, posts] = await Promise.all([
-      db.getReviews(params.id),
+      db.getReviews(id),
       db.getCommunityPosts({
-        destinationId: params.id,
+        destinationId: id,
       }),
     ]);
 
@@ -22,7 +26,7 @@ export async function GET(
       overallSum += r.overall_score;
 
       for (const [k, v] of Object.entries(r.category_scores || {})) {
-        if (typeof v === 'number') {
+        if (typeof v === "number") {
           if (!categoryTotals[k]) {
             categoryTotals[k] = { sum: 0, count: 0 };
           }
@@ -36,8 +40,7 @@ export async function GET(
     const categoryAverages: Record<string, number> = {};
 
     for (const [k, val] of Object.entries(categoryTotals)) {
-      categoryAverages[k] =
-        Math.round((val.sum / val.count) * 10) / 10;
+      categoryAverages[k] = Math.round((val.sum / val.count) * 10) / 10;
     }
 
     const overallAverage =
@@ -47,7 +50,7 @@ export async function GET(
 
     return NextResponse.json({
       data: {
-        destination_id: params.id,
+        destination_id: id,
         rating_summary: {
           overall_average: overallAverage,
           total_reviews: reviews.length,
@@ -59,10 +62,10 @@ export async function GET(
     });
   } catch (error: any) {
     const { response, status } = createErrorResponse(
-      'SERVER_ERROR',
-      'Failed to retrieve community data',
+      "SERVER_ERROR",
+      "Failed to retrieve community data",
       { details: error.message },
-      500
+      500,
     );
 
     return NextResponse.json(response, { status });

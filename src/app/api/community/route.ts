@@ -1,14 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db/supabase';
-import { createErrorResponse } from '@/lib/utils';
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db/supabase";
+import { createErrorResponse } from "@/lib/utils";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const destinationId = searchParams.get('destination_id') || undefined;
-    const category = searchParams.get('category') || undefined;
-    const sortBy = (searchParams.get('sort_by') as any) || 'popular';
-    const currentUserId = searchParams.get('user_id') || req.headers.get('x-user-id') || undefined;
+    const destinationId = searchParams.get("destination_id") || undefined;
+    const category = searchParams.get("category") || undefined;
+    const sortBy = (searchParams.get("sort_by") as any) || "popular";
+    const currentUserId =
+      searchParams.get("user_id") || req.headers.get("x-user-id") || undefined;
 
     const posts = await db.getCommunityPosts({
       destinationId,
@@ -22,17 +25,17 @@ export async function GET(req: NextRequest) {
         posts,
         meta: {
           count: posts.length,
-          category: category || 'All',
+          category: category || "All",
           sort_by: sortBy,
         },
       },
     });
   } catch (error: any) {
     const { response, status } = createErrorResponse(
-      'SERVER_ERROR',
-      'Failed to retrieve community feed',
+      "SERVER_ERROR",
+      "Failed to retrieve community feed",
       { details: error.message },
-      500
+      500,
     );
     return NextResponse.json(response, { status });
   }

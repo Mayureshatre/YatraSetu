@@ -5,16 +5,17 @@ import { createErrorResponse } from "@/lib/utils";
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id?: string; destinationId?: string } },
+  { params }: { params: Promise<{ id?: string; destinationId?: string }> },
 ) {
   try {
+    const resolvedParams = await params;
     const body = await req.json();
 
     // Resolve the destination ID from either URL param or request body
     const resolvedDestinationId =
-      params.id || params.destinationId || body.destination_id;
+      resolvedParams.id || resolvedParams.destinationId || body.destination_id;
 
-    console.log("DEBUG - Received params:", params);
+    console.log("DEBUG - Received params:", resolvedParams);
     console.log("DEBUG - Resolved Destination ID:", resolvedDestinationId);
     console.log("DEBUG - Received Body:", body);
 
